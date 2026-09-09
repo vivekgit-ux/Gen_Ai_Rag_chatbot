@@ -1,0 +1,27 @@
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# Secrets & Environment Variables
+.env
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local Vector Storage & State
+indexing/qdrant_data/
+indexing/docstore.json
+*.sqlite
+*.lock
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+.DS_Store
+
+*.pdf
+knowledge.txt
+evaluation_report.csv
