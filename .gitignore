@@ -25,3 +25,11 @@ indexing/docstore.json
 *.pdf
 knowledge.txt
 evaluation_report.csv
+
+.env
+__pycache__/
+.venv/
+qdrant_db/
+checkpoints.db
+*.pdf
+*.docx

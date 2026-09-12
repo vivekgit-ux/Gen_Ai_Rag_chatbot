@@ -43,3 +43,10 @@ GEN_AI-Application/
 ├── .env.example              # Template for environment variables
 ├── .gitignore                # Prevents uploading secrets & cache
 └── requirements.txt          # Python dependencies
+
+## 🚀 Upgrade: Autonomous Agentic RAG Pipeline
+This repository has been upgraded from Advanced RAG to a fully autonomous **Agentic RAG** system powered by **LangGraph**:
+- **Triage & Intent Routing:** Automatically determines whether to ingest documents, retrieve knowledge, or chat directly.
+- **Autonomous Ingestion:** Auto-parses, chunks, embeds (3072-dim Gemini), and updates Qdrant without manual scripts.
+- **Self-Correction & Evaluation Loops:** Includes chunk relevance grading, automated query re-writing on failure, and post-generation hallucination verification.
+- **Gemini-Inspired Operations UI:** Complete with interactive agent thought-process traces and grounded citations.

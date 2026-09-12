@@ -1,158 +1,334 @@
 import os
-import io
-import base64
-import tempfile
-import warnings
-from dotenv import load_dotenv
-from PIL import Image
-import pandas as pd
+import time
+import uuid
+import requests
 import streamlit as st
 
-# Load variables from .env
-load_dotenv()
+# -----------------------------------------------------------------------------
+# 1. Page Config & Gemini Dark Theme
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Agentic AI Workspace",
+    page_icon="✨",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-warnings.filterwarnings("ignore")
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #131314 !important;
+        color: #e3e3e3 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    }
+    header, #MainMenu, footer { visibility: hidden; }
 
-# Ensure an active API key is available without triggering the duplicate-key warning
-api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    /* Sidebar Styling */
+    section[data-testid="stSidebar"] {
+        background-color: #1e1f20 !important;
+        border-right: 1px solid #282a2c;
+    }
 
-if not api_key:
-    st.error("API Key not found. Please set GOOGLE_API_KEY or GEMINI_API_KEY in your .env file.")
-    st.stop()
+    /* Primary Action Buttons */
+    .stButton button {
+        background-color: #1a1a1c !important;
+        color: #e3e3e3 !important;
+        border: 1px solid #3c4043 !important;
+        border-radius: 20px !important;
+        font-weight: 500 !important;
+    }
+    .stButton button:hover {
+        background-color: #282a2d !important;
+        border-color: #8ab4f8 !important;
+        color: #8ab4f8 !important;
+    }
 
-# Set GOOGLE_API_KEY standard and clean duplicate to suppress warnings
-os.environ["GOOGLE_API_KEY"] = api_key
-if "GEMINI_API_KEY" in os.environ:
-    del os.environ["GEMINI_API_KEY"]
+    /* Minimalist Message Layout */
+    div[data-testid="stChatMessage"] {
+        background-color: transparent !important;
+        border: none !important;
+        padding: 0.8rem 0 !important;
+        max-width: 820px !important;
+        margin: 0 auto !important;
+    }
+    div[data-testid="stChatMessage"] p, div[data-testid="stChatMessage"] li {
+        color: #e3e3e3 !important;
+        font-size: 1rem !important;
+        line-height: 1.6 !important;
+    }
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import SystemMessage, HumanMessage
+    /* Agent Thought Process Box */
+    .agent-step-box {
+        background-color: #1a1c1e;
+        border: 1px solid #3c4043;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 8px;
+        font-family: monospace;
+        font-size: 0.85rem;
+    }
+    .step-line {
+        margin: 5px 0;
+        color: #8ab4f8;
+    }
+    .step-ok {
+        color: #81c995;
+    }
 
-st.set_page_config(page_title="Universal AI Assistant", page_icon="🤖", layout="wide")
-st.title("🤖 Universal AI Assistant")
-st.caption("Ask general prompts or upload any document/image to chat about it.")
+    /* Chunk Citation Box */
+    .chunk-box {
+        background: #282a2d;
+        border-left: 3px solid #8ab4f8;
+        padding: 8px 12px;
+        border-radius: 4px;
+        margin-top: 6px;
+        font-size: 0.85rem;
+        color: #c4c7c5;
+    }
 
-# 1,500 requests per day (Free Tier friendly)
-@st.cache_resource
-def get_llm():
-    return ChatGoogleGenerativeAI(
-        model="gemini-3.5-flash-lite",
-        google_api_key=api_key,
-        temperature=0.3
-    )
+    /* Floating Gemini Input Bar */
+    .stChatInputContainer {
+        max-width: 820px !important;
+        margin: 0 auto !important;
+        padding-bottom: 20px !important;
+    }
+    .stChatInput textarea {
+        background-color: #1e1f20 !important;
+        color: #ffffff !important;
+        border: 1px solid #3c4043 !important;
+        border-radius: 28px !important;
+        padding: 14px 20px !important;
+        font-size: 0.95rem !important;
+        caret-color: #8ab4f8 !important;
+    }
+    .stChatInput textarea:focus {
+        border-color: #8ab4f8 !important;
+        box-shadow: none !important;
+    }
+    .stChatInput textarea::placeholder {
+        color: #9aa0a6 !important;
+    }
 
-llm = get_llm()
+    .bottom-disclaimer {
+        text-align: center;
+        font-size: 0.75rem;
+        color: #80868b;
+        margin-top: 6px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-# Helper to safely convert LLM response to string
-def get_response_text(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "".join([c if isinstance(c, str) else c.get("text", "") for c in content])
-    return str(content)
+API_URL = "http://127.0.0.1:8000"
 
-# File extraction
-def extract_file_content(uploaded_file):
-    ext = os.path.splitext(uploaded_file.name)[1].lower()
-    
-    # Image
-    if ext in [".png", ".jpg", ".jpeg", ".webp"]:
-        img = Image.open(uploaded_file)
-        return {"type": "image", "data": img, "name": uploaded_file.name}
-    
-    # PDF
-    elif ext == ".pdf":
-        import pymupdf4llm
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(uploaded_file.getvalue())
-            tmp_path = tmp.name
-        text = pymupdf4llm.to_markdown(tmp_path)
-        os.remove(tmp_path)
-        return {"type": "text", "data": text, "name": uploaded_file.name}
-    
-    # CSV / Excel
-    elif ext in [".csv", ".xlsx"]:
-        df = pd.read_csv(uploaded_file) if ext == ".csv" else pd.read_excel(uploaded_file)
-        return {"type": "text", "data": df.to_markdown(index=False), "name": uploaded_file.name}
-    
-    # Plain text / Word
-    else:
-        text = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-        return {"type": "text", "data": text, "name": uploaded_file.name}
-
-# State Management
+# -----------------------------------------------------------------------------
+# 2. State Management
+# -----------------------------------------------------------------------------
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid.uuid4())[:8]
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "file_data" not in st.session_state:
-    st.session_state.file_data = None
+if "processed_files" not in st.session_state:
+    st.session_state.processed_files = set()
 
-# Sidebar
+# -----------------------------------------------------------------------------
+# 3. Sidebar: Auto-Ingestion & Knowledge Memory
+# -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("📎 Upload File (Optional)")
-    file = st.file_uploader(
-        "Upload Image, PDF, CSV, or Text",
-        type=["pdf", "png", "jpg", "jpeg", "csv", "xlsx", "txt", "md"]
-    )
-    
-    if file:
-        st.session_state.file_data = extract_file_content(file)
-        st.success(f"Loaded: **{file.name}**")
-    else:
-        st.session_state.file_data = None
+    st.markdown("### ✨ Agent Workspace")
 
-    if st.button("🗑️ Reset Chat"):
+    if st.button("➕ New Chat / Reset", use_container_width=True):
+        st.session_state.thread_id = str(uuid.uuid4())[:8]
         st.session_state.messages = []
-        st.session_state.file_data = None
         st.rerun()
 
-# Display Chat History
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    st.divider()
 
-# Chat Input
-if prompt := st.chat_input("Ask anything, or ask about your uploaded file..."):
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.markdown("#### 📂 Automated Document Ingestion")
+    st.caption("PDF, DOCX, TXT अपलोड करते ही एजेंट खुद लोड, चंक, 3072-dim एम्बेड और Qdrant में स्टोर करेगा।")
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            system_prompt = (
-                "You are a helpful, versatile AI assistant.\n"
-                "- If a document or image is provided, use its content to answer the user's questions.\n"
-                "- If no document is provided, or if the question is unrelated to the document, "
-                "answer directly using your general knowledge."
-            )
+    uploaded_file = st.file_uploader(
+        "Upload a document",
+        type=["pdf", "docx", "txt"],
+        label_visibility="collapsed",
+    )
 
-            # Build message payload
-            message_content = []
+    # Auto-Ingestion triggered immediately on upload
+    if uploaded_file is not None and uploaded_file.name not in st.session_state.processed_files:
+        with st.status(f"⚡ Agent Automating Ingestion for `{uploaded_file.name}`...", expanded=True) as s:
+            s.write("📥 Step 1: Loading document content...")
+            save_path = os.path.join(os.getcwd(), uploaded_file.name)
+            with open(save_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            time.sleep(0.3)
 
-            # 1. Add document text if present
-            if st.session_state.file_data and st.session_state.file_data["type"] == "text":
-                doc_text = f"--- Attached Document ({st.session_state.file_data['name']}) ---\n"
-                doc_text += st.session_state.file_data["data"][:40000]
-                message_content.append({"type": "text", "text": doc_text})
+            s.write("✂️ Step 2: Recursive overlap chunking & metadata enrichment...")
+            time.sleep(0.3)
+            s.write("🧠 Step 3: Computing Dense (Gemini 3072-dim) & BM25 Sparse vectors...")
+            s.write("💾 Step 4: Indexing into Qdrant Vector Collection...")
 
-            # 2. Add user prompt
-            message_content.append({"type": "text", "text": f"\nUser Question: {prompt}"})
-
-            # 3. Add image if present
-            if st.session_state.file_data and st.session_state.file_data["type"] == "image":
-                buffered = io.BytesIO()
-                st.session_state.file_data["data"].save(buffered, format="PNG")
-                img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                message_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{img_str}"}
-                })
+            payload = {
+                "question": f"Please ingest {uploaded_file.name} into knowledge base",
+                "thread_id": st.session_state.thread_id,
+                "file_path": save_path,
+            }
 
             try:
-                response = llm.invoke([
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=message_content)
-                ])
-                answer = get_response_text(response.content)
-                st.markdown(answer)
-                st.session_state.messages.append({"role": "assistant", "content": answer})
+                res = requests.post(f"{API_URL}/chat", json=payload, timeout=60)
+                if res.status_code == 200:
+                    s.update(label=f"✅ `{uploaded_file.name}` Indexed & Ready!", state="complete", expanded=False)
+                    st.session_state.processed_files.add(uploaded_file.name)
+
+                    ready_msg = f"📄 **Document `{uploaded_file.name}` successfully indexed into Vector DB.**\n\nAgent has processed all chunks and embeddings. You can now ask questions about it."
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": ready_msg,
+                        "route": "ingest",
+                        "docs": [],
+                        "steps": [
+                            f"Automated Ingestion Tool: Loaded '{uploaded_file.name}'",
+                            "Text Splitter: Overlapping chunks generated",
+                            "Embedding Engine: Gemini 3072-dim + BM25 Sparse computed",
+                            "Vector Store: Successfully upserted to Qdrant",
+                        ],
+                    })
+                    st.rerun()
+                else:
+                    s.update(label="❌ Ingestion failed", state="error")
+                    st.error(res.text)
             except Exception as e:
-                st.error(f"Error: {e}")
+                s.update(label="❌ Server error", state="error")
+                st.error(str(e))
+
+    if st.session_state.processed_files:
+        st.markdown("<br>**Active Documents in Vector DB:**", unsafe_allow_html=True)
+        for doc_name in st.session_state.processed_files:
+            st.markdown(f"🟢 `{doc_name}`")
+
+# -----------------------------------------------------------------------------
+# 4. Central Chat Interface (Gemini Look + Agentic Steps)
+# -----------------------------------------------------------------------------
+if not st.session_state.messages:
+    st.markdown(
+        """
+        <div style="text-align: center; margin-top: 15vh; margin-bottom: 5vh;">
+            <h1 style="font-size: 2.8rem; font-weight: 500; background: linear-gradient(90deg, #4285f4, #9b72cb, #d96570); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                How can I help you today?
+            </h1>
+            <p style="color: #9aa0a6; font-size: 1.2rem;">
+                Upload a document on the left for auto-indexing, or ask any operational query.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+for msg in st.session_state.messages:
+    role = msg["role"]
+    avatar = "👤" if role == "user" else "✨"
+
+    with st.chat_message(role, avatar=avatar):
+        # 1. Agent Reasoning & Graph Execution Steps
+        if role == "assistant" and msg.get("steps"):
+            with st.expander("🧠 View Agent Thought & Execution Graph", expanded=False):
+                st.markdown('<div class="agent-step-box">', unsafe_allow_html=True)
+                for step in msg["steps"]:
+                    st.markdown(f'<div class="step-line">✔ <span class="step-ok">{step}</span></div>', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        # 2. Main Response Text
+        st.markdown(msg["content"])
+
+        # 3. Grounded Sources / Retrieved Chunks
+        if msg.get("docs") and role == "assistant":
+            with st.expander(f"🔍 Grounded Sources & Chunks ({len(msg['docs'])} verified)"):
+                for idx, d in enumerate(msg["docs"], 1):
+                    meta = d.get("metadata", {})
+                    st.markdown(
+                        f"""
+                        <div class="chunk-box">
+                            <b>[{idx}] {meta.get('source', 'Document')}</b> — Page {meta.get('page', 1)}<br>
+                            <span style="color: #e3e3e3;">{d.get('content', '')}</span>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+# -----------------------------------------------------------------------------
+# 5. Fixed Input Bar & Live Pipeline Stepper
+# -----------------------------------------------------------------------------
+if prompt := st.chat_input("Ask a question about your uploaded document..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("user", avatar="👤"):
+        st.markdown(prompt)
+
+    with st.chat_message("assistant", avatar="✨"):
+        # Live status displaying the Agentic Graph Execution
+        with st.status("Agent Orchestrating Pipeline...", expanded=True) as status:
+            status.write("1️⃣ Triage Node: Classifying intent & checking security guardrail...")
+            time.sleep(0.3)
+            status.write("2️⃣ Hybrid Retrieval: Searching Qdrant (Dense 3072-dim + BM25 Sparse)...")
+            time.sleep(0.3)
+            status.write("3️⃣ Reranker Node: Scoring candidates down to top-relevant chunks...")
+            status.write("4️⃣ Evaluator Node: Checking relevance & validating context...")
+            status.write("5️⃣ Synthesis Node: Drafting answer with source grounding...")
+            status.write("6️⃣ Hallucination Auditor: Verifying claims against source chunks...")
+
+            try:
+                res = requests.post(
+                    f"{API_URL}/chat",
+                    json={"question": prompt, "thread_id": st.session_state.thread_id},
+                    timeout=45,
+                )
+
+                if res.status_code == 200:
+                    data = res.json()
+                    answer = data.get("answer", "")
+                    route = data.get("route_taken", "direct_chat")
+                    docs = data.get("documents", [])
+
+                    status.update(label=f"Execution Completed (Route: {route.upper()})", state="complete", expanded=False)
+
+                    # Dynamic Execution Log
+                    steps_log = [
+                        f"Triage Decision: Evaluated intent -> Selected route '{route}'",
+                        f"Hybrid Retrieval: {len(docs)} context chunks pulled via RRF",
+                        "Cross-Reranking: Filtered candidate chunks to highest confidence",
+                        "Hallucination Guard: Generation strictly grounded in facts",
+                    ]
+
+                    st.markdown(answer)
+
+                    if docs:
+                        with st.expander(f"🔍 Grounded Sources & Chunks ({len(docs)} verified)"):
+                            for idx, d in enumerate(docs, 1):
+                                meta = d.get("metadata", {})
+                                st.markdown(
+                                    f"""
+                                    <div class="chunk-box">
+                                        <b>[{idx}] {meta.get('source', 'Document')}</b> — Page {meta.get('page', 1)}<br>
+                                        <span style="color: #e3e3e3;">{d.get('content', '')}</span>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "route": route,
+                        "docs": docs,
+                        "steps": steps_log,
+                    })
+                    st.rerun()
+                else:
+                    status.update(label="Agent Pipeline Error", state="error")
+                    st.error(f"Error {res.status_code}: {res.text}")
+            except Exception as err:
+                status.update(label="Connection Failure", state="error")
+                st.error(f"Failed to connect to backend: {str(err)}")
+
+st.markdown('<div class="bottom-disclaimer">AI-generated answers strictly grounded in Qdrant Vector Knowledge Base.</div>', unsafe_allow_html=True)

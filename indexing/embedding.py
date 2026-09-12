@@ -18,7 +18,7 @@ def get_embedding_model(task_type: str = "RETRIEVAL_DOCUMENT") -> GoogleGenerati
     )
 
 if __name__ == "__main__":
-    print("Testing gemini-embedding-001...")
+    print("Testing gemini-embedding-004...")
     embedder = get_embedding_model(task_type="RETRIEVAL_DOCUMENT")
     
     sample_text = "Project Alpha drone specifications and flight metrics."
